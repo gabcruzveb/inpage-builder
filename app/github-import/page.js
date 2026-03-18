@@ -106,10 +106,10 @@ function GitHubImportContent() {
       )
       if (fileRes.ok) {
         const fileData = await fileRes.json()
-        // Save HTML to site
+        // Save HTML + CSS separately so GrapeJS style panel detects all properties
         await authFetch(`/api/sites/${siteId}`, {
           method: 'PUT',
-          body: JSON.stringify({ html: fileData.html }),
+          body: JSON.stringify({ html: fileData.html, css: fileData.css || '' }),
         })
       }
 

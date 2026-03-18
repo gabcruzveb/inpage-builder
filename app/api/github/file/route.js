@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from '@/lib/auth-server'
-import juice from 'juice'
 
-// Get file content from a GitHub repo using user's token
 export async function GET(request) {
   const auth = await getServerUser(request)
   if (!auth) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
   const { searchParams } = new URL(request.url)
-  const repo = searchParams.get('repo')   // e.g. "user/my-site"
+  const repo = searchParams.get('repo')
   const path = searchParams.get('path') || 'index.html'
   const branch = searchParams.get('branch') || 'main'
 
@@ -29,7 +27,6 @@ export async function GET(request) {
   const ghHeaders = { Authorization: `Bearer ${token}`, 'User-Agent': 'InPage-Builder' }
   const baseUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}/`
 
-  // Helper: fetch a file from the repo by path
   async function fetchRepoFile(filePath) {
     const res = await fetch(
       `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}?ref=${branch}`,
@@ -40,7 +37,15 @@ export async function GET(request) {
     return data.content ? Buffer.from(data.content, 'base64').toString('utf-8') : null
   }
 
-  // Try to find the HTML file
+  // Rewrite relative asset URLs to absolute raw GitHub URLs
+  function rewritePaths(text, fileDir = '') {
+    return text
+      .replace(/(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+["'])/g,
+        (m, attr, dot, rest) => `${attr}${baseUrl}${fileDir}${rest}`)
+      .replace(/url\(['"]?(?!https?:\/\/|\/\/|data:)(\.\/)?([^'")]+)['"]?\)/g,
+        (m, dot, rest) => `url('${baseUrl}${fileDir}${rest}')`)
+  }
+
   const filesToTry = path === 'index.html'
     ? ['index.html', 'public/index.html', 'dist/index.html', 'out/index.html']
     : [path]
@@ -50,59 +55,39 @@ export async function GET(request) {
     if (!content) continue
 
     const fileDir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/') + 1) : ''
+    let html = rewritePaths(content, fileDir)
 
-    // Rewrite relative asset paths (src/href/url()) to absolute raw GitHub URLs
-    function rewritePaths(text) {
-      return text
-        .replace(/(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+["'])/g,
-          (m, attr, dot, rest) => `${attr}${baseUrl}${fileDir}${rest}`)
-        .replace(/url\(['"]?(?!https?:\/\/|\/\/|data:)(\.\/)?([^'")]+)['"]?\)/g,
-          (m, dot, rest) => `url('${baseUrl}${fileDir}${rest}')`)
-    }
+    // Collect all CSS: first from linked stylesheets, then from inline <style> blocks
+    const allCss = []
 
-    let html = rewritePaths(content)
-
-    // Inline all linked CSS files so styles render correctly in the editor
-    // (avoids CORS issues and makes GrapeJS aware of the styles)
+    // 1. Fetch and inline linked CSS files
     const cssLinkRegex = /<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi
-    const cssInlines = []
     let match
-
     while ((match = cssLinkRegex.exec(html)) !== null) {
       const href = match[1]
-      // Only inline files from the same repo (already rewritten to raw.githubusercontent.com)
       if (href.startsWith(baseUrl)) {
         const cssPath = href.replace(baseUrl, '')
         const cssContent = await fetchRepoFile(cssPath)
         if (cssContent) {
-          // Also rewrite relative paths inside the CSS (background-image: url(...))
-          const rewrittenCss = rewritePaths(cssContent)
-          cssInlines.push({ tag: match[0], css: rewrittenCss })
+          allCss.push(rewritePaths(cssContent, fileDir))
         }
       }
     }
+    // Remove <link rel="stylesheet"> tags from HTML (CSS will be passed separately)
+    html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*\/?>/gi, '')
 
-    // Replace <link> tags with inlined <style> blocks
-    for (const { tag, css } of cssInlines) {
-      html = html.replace(tag, `<style>\n${css}\n</style>`)
-    }
+    // 2. Extract <style> blocks from the HTML
+    html = html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css) => {
+      allCss.push(rewritePaths(css, fileDir))
+      return ''
+    })
 
-    // Convert CSS class styles to inline styles so GrapeJS style panel
-    // can read and edit colors, typography, spacing correctly
-    try {
-      html = juice(html, {
-        inlinePseudoElements: false,
-        preserveMediaQueries: true,
-        preserveFontFaces: true,
-        applyWidthAttributes: false,
-        applyHeightAttributes: false,
-      })
-    } catch {
-      // If juice fails, continue with non-inlined HTML
-    }
+    const css = allCss.join('\n\n')
 
-    return NextResponse.json({ html, path: filePath })
+    return NextResponse.json({ html, css, path: filePath })
   }
 
-  return NextResponse.json({ error: `Arquivo HTML não encontrado no repositório "${repo}". Certifique-se que existe um arquivo index.html.` }, { status: 404 })
+  return NextResponse.json({
+    error: `Arquivo HTML não encontrado no repositório "${repo}". Certifique-se que existe um arquivo index.html.`
+  }, { status: 404 })
 }

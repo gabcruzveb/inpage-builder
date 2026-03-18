@@ -33,32 +33,8 @@ function LoginForm() {
 
         if (authError) throw authError
 
-        // Fetch user role using the access token directly (avoids RLS timing issues)
-        const accessToken = data.session?.access_token
-        let role = 'client'
-        if (accessToken) {
-          const res = await fetch(
-            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?select=role&id=eq.${data.user.id}`,
-            {
-              headers: {
-                apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-                Authorization: `Bearer ${accessToken}`,
-              },
-            }
-          )
-          if (res.ok) {
-            const profiles = await res.json()
-            role = profiles[0]?.role || 'client'
-          }
-        }
-
-        if (redirectTo) {
-          router.push(redirectTo)
-        } else if (role === 'admin') {
-          router.push('/admin')
-        } else {
-          router.push('/dashboard')
-        }
+        // Redirect to dashboard — the layout handles admin detection
+        router.push(redirectTo || '/dashboard')
         router.refresh()
       } else {
         // Register mode

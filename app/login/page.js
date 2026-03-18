@@ -33,14 +33,24 @@ function LoginForm() {
 
         if (authError) throw authError
 
-        // Fetch user role to redirect appropriately
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .single()
-
-        const role = profile?.role || 'client'
+        // Fetch user role using the access token directly (avoids RLS timing issues)
+        const accessToken = data.session?.access_token
+        let role = 'client'
+        if (accessToken) {
+          const res = await fetch(
+            `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/profiles?select=role&id=eq.${data.user.id}`,
+            {
+              headers: {
+                apikey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+                Authorization: `Bearer ${accessToken}`,
+              },
+            }
+          )
+          if (res.ok) {
+            const profiles = await res.json()
+            role = profiles[0]?.role || 'client'
+          }
+        }
 
         if (redirectTo) {
           router.push(redirectTo)

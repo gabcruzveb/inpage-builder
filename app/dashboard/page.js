@@ -269,31 +269,18 @@ export default function DashboardPage() {
                     setCreateForm({
                       ...createForm,
                       name: e.target.value,
-                      slug: e.target.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, ''),
+                      slug: e.target.value.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'site',
                     })
                   }
                   required
-                  placeholder="Meu Site Incrível"
+                  placeholder="Ex: Site do João, Barbearia Silva..."
                   className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder-zinc-500 focus:border-[#E8922A] focus:outline-none"
                 />
-              </div>
-              <div>
-                <label className="block text-sm text-zinc-300 mb-2">
-                  Slug <span className="text-zinc-500">(URL amigável)</span>
-                </label>
-                <input
-                  type="text"
-                  value={createForm.slug}
-                  onChange={(e) => setCreateForm({ ...createForm, slug: e.target.value })}
-                  required
-                  placeholder="meu-site-incrivel"
-                  pattern="[a-z0-9-]+"
-                  title="Apenas letras minúsculas, números e hífens"
-                  className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-white placeholder-zinc-500 focus:border-[#E8922A] focus:outline-none font-mono"
-                />
-                <p className="text-xs text-zinc-600 mt-1">
-                  Apenas letras minúsculas, números e hífens
-                </p>
+                {createForm.slug && (
+                  <p className="text-xs text-zinc-500 mt-2">
+                    URL: <span className="text-[#E8922A] font-mono">/s/{createForm.slug}</span>
+                  </p>
+                )}
               </div>
               <div className="flex gap-3 pt-2">
                 <button

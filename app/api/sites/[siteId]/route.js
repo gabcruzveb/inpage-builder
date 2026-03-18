@@ -1,14 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerUser } from '@/lib/auth-server'
-import { createServiceClient } from '@/lib/supabase'
-
-async function getSiteForUser(siteId, userId, isAdmin) {
-  const service = createServiceClient()
-  let query = service.from('sites').select('*').eq('id', siteId)
-  if (!isAdmin) query = query.eq('owner_id', userId)
-  const { data, error } = await query.single()
-  return { data, error }
-}
+import { getServerUser, getAdminClient } from '@/lib/auth-server'
 
 export async function GET(request, { params }) {
   const auth = await getServerUser(request)
@@ -17,7 +8,11 @@ export async function GET(request, { params }) {
   const { siteId } = await params
   const isAdmin = auth.profile?.role === 'admin'
 
-  const { data, error } = await getSiteForUser(siteId, auth.user.id, isAdmin)
+  const queryClient = isAdmin ? getAdminClient(auth) : auth.client
+  let query = queryClient.from('sites').select('*').eq('id', siteId)
+  if (!isAdmin) query = query.eq('owner_id', auth.user.id)
+
+  const { data, error } = await query.single()
   if (error || !data) return NextResponse.json({ error: 'Site não encontrado' }, { status: 404 })
 
   return NextResponse.json(data)
@@ -30,7 +25,11 @@ export async function PUT(request, { params }) {
   const { siteId } = await params
   const isAdmin = auth.profile?.role === 'admin'
 
-  const { data: existing } = await getSiteForUser(siteId, auth.user.id, isAdmin)
+  // Verify ownership first
+  const checkClient = isAdmin ? getAdminClient(auth) : auth.client
+  let checkQuery = checkClient.from('sites').select('id').eq('id', siteId)
+  if (!isAdmin) checkQuery = checkQuery.eq('owner_id', auth.user.id)
+  const { data: existing } = await checkQuery.single()
   if (!existing) return NextResponse.json({ error: 'Site não encontrado' }, { status: 404 })
 
   const body = await request.json()
@@ -39,9 +38,10 @@ export async function PUT(request, { params }) {
   for (const key of ALLOWED) {
     if (key in body) updates[key] = body[key]
   }
+  updates.updated_at = new Date().toISOString()
 
-  const service = createServiceClient()
-  const { data, error } = await service
+  const admin = getAdminClient(auth)
+  const { data, error } = await admin
     .from('sites')
     .update(updates)
     .eq('id', siteId)
@@ -49,7 +49,6 @@ export async function PUT(request, { params }) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
   return NextResponse.json(data)
 }
 
@@ -60,11 +59,15 @@ export async function DELETE(request, { params }) {
   const { siteId } = await params
   const isAdmin = auth.profile?.role === 'admin'
 
-  const { data: existing } = await getSiteForUser(siteId, auth.user.id, isAdmin)
+  // Verify ownership first
+  const checkClient = isAdmin ? getAdminClient(auth) : auth.client
+  let checkQuery = checkClient.from('sites').select('id').eq('id', siteId)
+  if (!isAdmin) checkQuery = checkQuery.eq('owner_id', auth.user.id)
+  const { data: existing } = await checkQuery.single()
   if (!existing) return NextResponse.json({ error: 'Site não encontrado' }, { status: 404 })
 
-  const service = createServiceClient()
-  const { error } = await service.from('sites').delete().eq('id', siteId)
+  const admin = getAdminClient(auth)
+  const { error } = await admin.from('sites').delete().eq('id', siteId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ success: true })

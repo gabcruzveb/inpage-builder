@@ -1,21 +1,30 @@
 import { NextResponse } from 'next/server'
-import { getServerUser } from '@/lib/auth-server'
-import { createServiceClient } from '@/lib/supabase'
+import { getServerUser, getAdminClient } from '@/lib/auth-server'
 
 export async function GET(request) {
   const auth = await getServerUser(request)
   if (!auth) return NextResponse.json({ error: 'Não autorizado' }, { status: 401 })
 
-  const service = createServiceClient()
-  let query = service.from('sites').select('*').order('created_at', { ascending: false })
+  const isAdmin = auth.profile?.role === 'admin'
 
-  if (auth.profile?.role !== 'admin') {
-    query = query.eq('owner_id', auth.user.id)
+  // Admin uses service client (sees all); regular users use their own client (RLS filters by owner_id)
+  let data, error
+  if (isAdmin) {
+    const admin = getAdminClient(auth)
+    const result = await admin.from('sites').select('*').order('created_at', { ascending: false })
+    data = result.data
+    error = result.error
+  } else {
+    const result = await auth.client
+      .from('sites')
+      .select('*')
+      .eq('owner_id', auth.user.id)
+      .order('created_at', { ascending: false })
+    data = result.data
+    error = result.error
   }
 
-  const { data, error } = await query
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
   return NextResponse.json(data)
 }
 
@@ -30,11 +39,10 @@ export async function POST(request) {
     return NextResponse.json({ error: 'Nome e slug são obrigatórios' }, { status: 400 })
   }
 
-  // Admin pode definir owner; cliente usa o próprio ID
   const finalOwnerId = auth.profile?.role === 'admin' && owner_id ? owner_id : auth.user.id
 
-  const service = createServiceClient()
-  const { data, error } = await service
+  const admin = getAdminClient(auth)
+  const { data, error } = await admin
     .from('sites')
     .insert({ name, slug, owner_id: finalOwnerId })
     .select()

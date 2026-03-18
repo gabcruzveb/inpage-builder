@@ -39,7 +39,21 @@ export async function GET(request) {
     if (res.ok) {
       const data = await res.json()
       if (data.content) {
-        const html = Buffer.from(data.content, 'base64').toString('utf-8')
+        let html = Buffer.from(data.content, 'base64').toString('utf-8')
+
+        // Rewrite relative asset paths to absolute GitHub raw URLs
+        // so images, CSS and JS load correctly inside the editor
+        const baseUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}/`
+        const fileDir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/') + 1) : ''
+
+        html = html
+          // src="assets/..." or src="./assets/..."
+          .replace(/(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+["'])/g,
+            (match, attr, dot, rest) => `${attr}${baseUrl}${fileDir}${rest}`)
+          // url('assets/...') in inline styles
+          .replace(/url\(['"]?(?!https?:\/\/|\/\/|data:)(\.\/)?([^'")]+)['"]?\)/g,
+            (match, dot, rest) => `url('${baseUrl}${fileDir}${rest}')`)
+
         return NextResponse.json({ html, path: filePath, sha: data.sha })
       }
     }

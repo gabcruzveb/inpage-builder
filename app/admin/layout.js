@@ -1,63 +1,57 @@
-import { redirect } from 'next/navigation'
-import { cookies } from 'next/headers'
-import { createClient } from '@supabase/supabase-js'
+'use client'
 
-async function getAdminUser() {
-  const cookieStore = await cookies()
-  const allCookies = cookieStore.getAll()
+import { useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 
-  // Find Supabase auth token
-  const authCookie = allCookies.find(
-    (c) =>
-      c.name.startsWith('sb-') &&
-      (c.name.endsWith('-auth-token') || c.name.endsWith('-auth-token.0'))
-  )
+export default function AdminLayout({ children }) {
+  const router = useRouter()
+  const [user, setUser] = useState(null)
+  const [loading, setLoading] = useState(true)
 
-  if (!authCookie) return null
+  useEffect(() => {
+    async function checkAuth() {
+      const { data: { session } } = await supabase.auth.getSession()
 
-  try {
-    const tokenData = JSON.parse(decodeURIComponent(authCookie.value))
-    const accessToken = tokenData?.access_token || tokenData?.[0]
-    if (!accessToken) return null
-
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-      {
-        global: { headers: { Authorization: `Bearer ${accessToken}` } },
-        auth: { autoRefreshToken: false, persistSession: false },
+      if (!session) {
+        router.push('/login?redirectTo=/admin')
+        return
       }
+
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+
+      if (profile?.role !== 'admin') {
+        router.push('/dashboard')
+        return
+      }
+
+      setUser(session.user)
+      setLoading(false)
+    }
+
+    checkAuth()
+  }, [router])
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#000' }}>
+        <div style={{ width: 32, height: 32, border: '2px solid #E8922A', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
     )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-
-    return { user, profile }
-  } catch {
-    return null
-  }
-}
-
-export default async function AdminLayout({ children }) {
-  const result = await getAdminUser()
-
-  if (!result) {
-    redirect('/login?redirectTo=/admin')
   }
 
-  if (result.profile?.role !== 'admin') {
-    redirect('/dashboard')
+  async function handleSignOut() {
+    await supabase.auth.signOut()
+    router.push('/login')
   }
 
   return (
     <div className="min-h-screen bg-black">
-      {/* Admin Nav */}
       <nav className="bg-zinc-900 border-b border-zinc-800 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
@@ -74,8 +68,8 @@ export default async function AdminLayout({ children }) {
             </div>
 
             <div className="flex items-center gap-4">
-              <span className="text-zinc-400 text-sm hidden sm:block">
-                {result.user.email}
+              <span className="text-zinc-400 text-sm hidden sm:block truncate max-w-xs">
+                {user?.email}
               </span>
               <a
                 href="/dashboard"
@@ -83,14 +77,12 @@ export default async function AdminLayout({ children }) {
               >
                 Dashboard
               </a>
-              <form action="/api/auth/signout" method="POST">
-                <button
-                  type="submit"
-                  className="text-zinc-400 hover:text-red-400 text-sm transition-colors"
-                >
-                  Sair
-                </button>
-              </form>
+              <button
+                onClick={handleSignOut}
+                className="text-zinc-400 hover:text-red-400 text-sm transition-colors"
+              >
+                Sair
+              </button>
             </div>
           </div>
         </div>

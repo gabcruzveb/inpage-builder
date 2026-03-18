@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getServerUser } from '@/lib/auth-server'
+import juice from 'juice'
 
 // Get file content from a GitHub repo using user's token
 export async function GET(request) {
@@ -84,6 +85,20 @@ export async function GET(request) {
     // Replace <link> tags with inlined <style> blocks
     for (const { tag, css } of cssInlines) {
       html = html.replace(tag, `<style>\n${css}\n</style>`)
+    }
+
+    // Convert CSS class styles to inline styles so GrapeJS style panel
+    // can read and edit colors, typography, spacing correctly
+    try {
+      html = juice(html, {
+        inlinePseudoElements: false,
+        preserveMediaQueries: true,
+        preserveFontFaces: true,
+        applyWidthAttributes: false,
+        applyHeightAttributes: false,
+      })
+    } catch {
+      // If juice fails, continue with non-inlined HTML
     }
 
     return NextResponse.json({ html, path: filePath })

@@ -278,7 +278,7 @@ export default function DashboardPage() {
                 />
                 {createForm.slug && (
                   <p className="text-xs text-zinc-500 mt-2">
-                    URL: <span className="text-[#E8922A] font-mono">/s/{createForm.slug}</span>
+                    URL: <span className="text-[#E8922A] font-mono break-all">{typeof window !== 'undefined' ? window.location.origin : ''}/s/{createForm.slug}</span>
                   </p>
                 )}
               </div>

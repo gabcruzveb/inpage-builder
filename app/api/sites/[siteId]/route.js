@@ -40,8 +40,7 @@ export async function PUT(request, { params }) {
   }
   updates.updated_at = new Date().toISOString()
 
-  const admin = getAdminClient(auth)
-  const { data, error } = await admin
+  const { data, error } = await auth.client
     .from('sites')
     .update(updates)
     .eq('id', siteId)
@@ -66,8 +65,7 @@ export async function DELETE(request, { params }) {
   const { data: existing } = await checkQuery.single()
   if (!existing) return NextResponse.json({ error: 'Site não encontrado' }, { status: 404 })
 
-  const admin = getAdminClient(auth)
-  const { error } = await admin.from('sites').delete().eq('id', siteId)
+  const { error } = await auth.client.from('sites').delete().eq('id', siteId)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   return NextResponse.json({ success: true })

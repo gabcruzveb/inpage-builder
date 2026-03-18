@@ -41,8 +41,9 @@ export async function POST(request) {
 
   const finalOwnerId = auth.profile?.role === 'admin' && owner_id ? owner_id : auth.user.id
 
-  const admin = getAdminClient(auth)
-  const { data, error } = await admin
+  // Use user's own client (works with RLS + GRANT) — service role only for admin cross-user ops
+  const insertClient = auth.client
+  const { data, error } = await insertClient
     .from('sites')
     .insert({ name, slug, owner_id: finalOwnerId })
     .select()

@@ -5,18 +5,34 @@ import { getServerUser } from '@/lib/auth-server'
 function normalizePath(base, relative) {
   if (!relative) return base
   if (relative.startsWith('/')) return relative.slice(1)
-
   const stack = base ? base.split('/') : []
   const parts = relative.split('/')
-
   for (const part of parts) {
-    if (part === '..') {
-      if (stack.length > 0) stack.pop()
-    } else if (part !== '.') {
-      stack.push(part)
-    }
+    if (part === '..') { if (stack.length > 0) stack.pop() }
+    else if (part !== '.') stack.push(part)
   }
   return stack.join('/')
+}
+
+// Rewrite relative asset URLs to absolute raw GitHub URLs
+function rewritePaths(text, rawBase, fileDir = '') {
+  // src/href/action attributes
+  text = text.replace(
+    /(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"'\s>]+)(["'])/g,
+    (m, attr, dot, rel, quote) => `${attr}${rawBase}${normalizePath(fileDir, rel)}${quote}`
+  )
+  // url() in CSS
+  text = text.replace(
+    /url\(\s*['"]?(?!https?:\/\/|\/\/|data:|#)(\.\/)?([^'"\)\s]+)['"]?\s*\)/g,
+    (m, dot, rel) => `url('${rawBase}${normalizePath(fileDir, rel)}')`
+  )
+  return text
+}
+
+// Extract the value of an HTML attribute from a tag string (order-independent)
+function getAttr(tag, attr) {
+  const m = tag.match(new RegExp(`${attr}\\s*=\\s*["']([^"']+)["']`, 'i'))
+  return m ? m[1] : null
 }
 
 export async function GET(request) {
@@ -31,10 +47,7 @@ export async function GET(request) {
   if (!repo) return NextResponse.json({ error: 'repo é obrigatório' }, { status: 400 })
 
   const { data: profile } = await auth.client
-    .from('profiles')
-    .select('github_token')
-    .eq('id', auth.user.id)
-    .single()
+    .from('profiles').select('github_token').eq('id', auth.user.id).single()
 
   const token = profile?.github_token
   if (!token) return NextResponse.json({ error: 'GitHub não conectado' }, { status: 400 })
@@ -46,34 +59,12 @@ export async function GET(request) {
   const rawBase = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}/`
   const apiBase = `https://api.github.com/repos/${owner}/${repoName}/contents/`
 
-  async function fetchRepoFile(filePath) {
-    const cleanPath = filePath.replace(/^\//, '')
-    const res = await fetch(`${apiBase}${cleanPath}?ref=${branch}`, { headers: ghHeaders })
+  async function fetchRepoText(filePath) {
+    const clean = filePath.replace(/^\//, '')
+    const res = await fetch(`${apiBase}${clean}?ref=${branch}`, { headers: ghHeaders })
     if (!res.ok) return null
     const data = await res.json()
     return data.content ? Buffer.from(data.content, 'base64').toString('utf-8') : null
-  }
-
-  // Rewrite relative asset paths to absolute raw GitHub URLs
-  // fileDir = directory of the file being processed (e.g. "assets/" for "assets/style.css")
-  function rewritePaths(text, fileDir = '') {
-    // src/href attributes (images, scripts, etc.)
-    text = text.replace(
-      /(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+)(["'])/g,
-      (m, attr, dot, rel, quote) => {
-        const resolved = normalizePath(fileDir, rel)
-        return `${attr}${rawBase}${resolved}${quote}`
-      }
-    )
-    // url() in CSS (background-image, etc.)
-    text = text.replace(
-      /url\(['"]?(?!https?:\/\/|\/\/|data:|#)(\.\/)?([^'")]+)['"]?\)/g,
-      (m, dot, rel) => {
-        const resolved = normalizePath(fileDir, rel)
-        return `url('${rawBase}${resolved}')`
-      }
-    )
-    return text
   }
 
   const filesToTry = path === 'index.html'
@@ -81,61 +72,64 @@ export async function GET(request) {
     : [path]
 
   for (const filePath of filesToTry) {
-    const content = await fetchRepoFile(filePath)
+    const content = await fetchRepoText(filePath)
     if (!content) continue
 
-    // fileDir is the directory containing index.html (usually '' for root)
     const fileDir = filePath.includes('/')
-      ? filePath.substring(0, filePath.lastIndexOf('/') + 1)
-      : ''
+      ? filePath.substring(0, filePath.lastIndexOf('/') + 1) : ''
 
-    let html = rewritePaths(content, fileDir)
+    // Step 1: Rewrite all relative paths in the HTML to absolute GitHub raw URLs
+    let html = rewritePaths(content, rawBase, fileDir)
 
-    const allCss = []
-    const localLinksToRemove = []
+    // Step 2: Find ALL <link> tags and process stylesheet ones
+    // Use a robust tag-level match that works regardless of attribute order
+    html = await (async () => {
+      const parts = []
+      let lastIndex = 0
+      const linkTagRegex = /<link\s[^>]*>/gi
+      let m
 
-    // 1. Find all <link rel="stylesheet"> tags
-    const cssLinkRegex = /<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi
-    let match
-    while ((match = cssLinkRegex.exec(html)) !== null) {
-      const fullTag = match[0]
-      const href = match[1]
+      while ((m = linkTagRegex.exec(html)) !== null) {
+        const tag = m[0]
+        const rel = getAttr(tag, 'rel')
+        const href = getAttr(tag, 'href')
 
-      // Only fetch and remove LOCAL repo files (not Google Fonts, CDN, etc.)
-      const isLocal = !href.startsWith('http') && !href.startsWith('//')
-      const isAlreadyRaw = href.startsWith(rawBase)
+        if (rel && rel.toLowerCase() === 'stylesheet' && href) {
+          const isLocal = !href.startsWith('http') && !href.startsWith('//')
+          const isRepoRaw = href.startsWith(rawBase)
 
-      if (isLocal || isAlreadyRaw) {
-        // Resolve the CSS file path relative to the HTML file's directory
-        const cssRelPath = isAlreadyRaw ? href.replace(rawBase, '') : href
-        const cssFilePath = normalizePath(fileDir, cssRelPath)
-        const cssContent = await fetchRepoFile(cssFilePath)
-        if (cssContent) {
-          // Rewrite paths inside CSS relative to the CSS file's directory
-          const cssDir = cssFilePath.includes('/')
-            ? cssFilePath.substring(0, cssFilePath.lastIndexOf('/') + 1)
-            : ''
-          allCss.push(rewritePaths(cssContent, cssDir))
-          localLinksToRemove.push(fullTag)
+          if (isLocal || isRepoRaw) {
+            // This is a local repo CSS file — fetch and embed as <style>
+            const cssRelPath = isRepoRaw ? href.replace(rawBase, '') : href
+            const cssFilePath = normalizePath(fileDir, cssRelPath)
+            const cssContent = await fetchRepoText(cssFilePath)
+
+            parts.push(html.slice(lastIndex, m.index))
+
+            if (cssContent) {
+              const cssDir = cssFilePath.includes('/')
+                ? cssFilePath.substring(0, cssFilePath.lastIndexOf('/') + 1) : ''
+              const rewrittenCss = rewritePaths(cssContent, rawBase, cssDir)
+              parts.push(`<style>\n${rewrittenCss}\n</style>`)
+            }
+            // else: CSS file not found, skip the link tag entirely
+
+            lastIndex = m.index + tag.length
+          }
+          // External CDN/Google Fonts links: leave untouched (don't advance lastIndex)
         }
       }
-      // External links (Google Fonts, CDNs) are left in the HTML as-is
-    }
 
-    // Remove only the local CSS links we fetched (keep CDN/Google Fonts links)
-    for (const tag of localLinksToRemove) {
-      html = html.replace(tag, '')
-    }
+      parts.push(html.slice(lastIndex))
+      return parts.join('')
+    })()
 
-    // 2. Extract <style> blocks from the HTML (move to CSS)
-    html = html.replace(/<style[^>]*>([\s\S]*?)<\/style>/gi, (_, css) => {
-      allCss.push(rewritePaths(css, fileDir))
-      return ''
+    // Step 3: Rewrite url() inside any existing <style> blocks
+    html = html.replace(/<style([^>]*)>([\s\S]*?)<\/style>/gi, (_, attrs, css) => {
+      return `<style${attrs}>\n${rewritePaths(css, rawBase, fileDir)}\n</style>`
     })
 
-    const css = allCss.join('\n\n')
-
-    return NextResponse.json({ html, css, path: filePath })
+    return NextResponse.json({ html, path: filePath })
   }
 
   return NextResponse.json({

@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase } from '@/lib/supabase'
 import { authFetch } from '@/lib/api'
 
 function SiteCard({ site, onPublish, onDelete, publishing }) {
@@ -142,12 +141,9 @@ export default function DashboardPage() {
   const fetchSites = useCallback(async () => {
     setLoading(true)
     try {
-      const { data, error: fetchError } = await supabase
-        .from('sites')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (fetchError) throw fetchError
+      const res = await authFetch('/api/sites')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Erro ao carregar sites')
       setSites(data || [])
     } catch (err) {
       setError('Erro ao carregar sites: ' + err.message)

@@ -25,38 +25,68 @@ export async function GET(request) {
   const [owner, repoName] = repo.split('/')
   if (!owner || !repoName) return NextResponse.json({ error: 'Formato inválido. Use usuario/repositorio' }, { status: 400 })
 
+  const ghHeaders = { Authorization: `Bearer ${token}`, 'User-Agent': 'InPage-Builder' }
+  const baseUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}/`
+
+  // Helper: fetch a file from the repo by path
+  async function fetchRepoFile(filePath) {
+    const res = await fetch(
+      `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}?ref=${branch}`,
+      { headers: ghHeaders }
+    )
+    if (!res.ok) return null
+    const data = await res.json()
+    return data.content ? Buffer.from(data.content, 'base64').toString('utf-8') : null
+  }
+
   // Try to find the HTML file
   const filesToTry = path === 'index.html'
     ? ['index.html', 'public/index.html', 'dist/index.html', 'out/index.html']
     : [path]
 
   for (const filePath of filesToTry) {
-    const res = await fetch(
-      `https://api.github.com/repos/${owner}/${repoName}/contents/${filePath}?ref=${branch}`,
-      { headers: { Authorization: `Bearer ${token}`, 'User-Agent': 'InPage-Builder' } }
-    )
+    const content = await fetchRepoFile(filePath)
+    if (!content) continue
 
-    if (res.ok) {
-      const data = await res.json()
-      if (data.content) {
-        let html = Buffer.from(data.content, 'base64').toString('utf-8')
+    const fileDir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/') + 1) : ''
 
-        // Rewrite relative asset paths to absolute GitHub raw URLs
-        // so images, CSS and JS load correctly inside the editor
-        const baseUrl = `https://raw.githubusercontent.com/${owner}/${repoName}/${branch}/`
-        const fileDir = filePath.includes('/') ? filePath.substring(0, filePath.lastIndexOf('/') + 1) : ''
+    // Rewrite relative asset paths (src/href/url()) to absolute raw GitHub URLs
+    function rewritePaths(text) {
+      return text
+        .replace(/(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+["'])/g,
+          (m, attr, dot, rest) => `${attr}${baseUrl}${fileDir}${rest}`)
+        .replace(/url\(['"]?(?!https?:\/\/|\/\/|data:)(\.\/)?([^'")]+)['"]?\)/g,
+          (m, dot, rest) => `url('${baseUrl}${fileDir}${rest}')`)
+    }
 
-        html = html
-          // src="assets/..." or src="./assets/..."
-          .replace(/(\s(?:src|href|action)=["'])(?!https?:\/\/|\/\/|#|data:|mailto:)(\.\/)?([^"']+["'])/g,
-            (match, attr, dot, rest) => `${attr}${baseUrl}${fileDir}${rest}`)
-          // url('assets/...') in inline styles
-          .replace(/url\(['"]?(?!https?:\/\/|\/\/|data:)(\.\/)?([^'")]+)['"]?\)/g,
-            (match, dot, rest) => `url('${baseUrl}${fileDir}${rest}')`)
+    let html = rewritePaths(content)
 
-        return NextResponse.json({ html, path: filePath, sha: data.sha })
+    // Inline all linked CSS files so styles render correctly in the editor
+    // (avoids CORS issues and makes GrapeJS aware of the styles)
+    const cssLinkRegex = /<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*\/?>/gi
+    const cssInlines = []
+    let match
+
+    while ((match = cssLinkRegex.exec(html)) !== null) {
+      const href = match[1]
+      // Only inline files from the same repo (already rewritten to raw.githubusercontent.com)
+      if (href.startsWith(baseUrl)) {
+        const cssPath = href.replace(baseUrl, '')
+        const cssContent = await fetchRepoFile(cssPath)
+        if (cssContent) {
+          // Also rewrite relative paths inside the CSS (background-image: url(...))
+          const rewrittenCss = rewritePaths(cssContent)
+          cssInlines.push({ tag: match[0], css: rewrittenCss })
+        }
       }
     }
+
+    // Replace <link> tags with inlined <style> blocks
+    for (const { tag, css } of cssInlines) {
+      html = html.replace(tag, `<style>\n${css}\n</style>`)
+    }
+
+    return NextResponse.json({ html, path: filePath })
   }
 
   return NextResponse.json({ error: `Arquivo HTML não encontrado no repositório "${repo}". Certifique-se que existe um arquivo index.html.` }, { status: 404 })

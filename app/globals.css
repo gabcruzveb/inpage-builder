@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --gold: #E8922A;
+  --gold-dark: #c77a1e;
+  --gold-light: #f0a84a;
+  --background: #000000;
+  --foreground: #ffffff;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #111;
+}
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #E8922A;
+}
+
+/* Focus ring using gold */
+*:focus-visible {
+  outline: 2px solid #E8922A;
+  outline-offset: 2px;
+}
+
+/* GrapeJS editor overrides */
+#gjs {
+  border: none !important;
+}
+
+.gjs-one-bg {
+  background-color: #1a1a1a !important;
+}
+
+.gjs-two-bg {
+  background-color: #111111 !important;
+}
+
+.gjs-three-bg {
+  background-color: #E8922A !important;
+}
+
+.gjs-four-bg {
+  background-color: #222222 !important;
 }

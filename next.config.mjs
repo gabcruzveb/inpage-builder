@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  /* config options here */
-};
+  // GrapeJS é carregado dinamicamente no client (useEffect) — sem SSR issues
+  turbopack: {},
+}
 
 export default nextConfig;

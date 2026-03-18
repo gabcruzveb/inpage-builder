@@ -9,6 +9,10 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "@supabase/supabase-js": "^2.99.2",
+    "grapesjs": "^0.21.13",
+    "grapesjs-preset-webpage": "^1.0.2",
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3"
